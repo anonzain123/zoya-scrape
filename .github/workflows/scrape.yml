@@ -1,0 +1,45 @@
+name: 24/7 Media Scraper
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Runs every 15 minutes
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
+
+jobs:
+  scrape-and-save:
+    runs-on: ubuntu-latest
+    
+    # Grant permissions to commit the seen_albums.txt back to the repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Scraper
+        run: python scraper.py
+
+      - name: Upload Downloaded Media
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraped-media-${{ github.run_id }}
+          path: downloads/
+          retention-days: 7 # Keeps artifacts for 7 days (adjust as needed, max 90)
+          if-no-files-found: ignore
+
+      - name: Commit seen_albums.txt
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_albums.txt
+          # Only commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update seen albums" && git push)
