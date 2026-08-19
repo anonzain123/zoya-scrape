@@ -19,16 +19,20 @@ def save_seen(seen):
     with open(SEEN_FILE, "w") as f:
         f.write("\n".join(seen))
 
-def download_file(url, folder):
+# 1. Added 'headers' parameter to bypass CDN blocking
+def download_file(url, folder, headers):
     """Download the media file from the given URL."""
     if not url: return
-    filename = url.split("/")[-1]
+    
+    # Clean up the filename in case the CDN appends query parameters (e.g., .jpg?v=123)
+    filename = url.split("/")[-1].split("?")[0]
     filepath = os.path.join(folder, filename)
     
     if not os.path.exists(filepath):
         print(f"Downloading: {filename}")
         try:
-            r = requests.get(url, stream=True, timeout=15)
+            # Pass the headers into the get request here!
+            r = requests.get(url, stream=True, headers=headers, timeout=15)
             r.raise_for_status()
             with open(filepath, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
@@ -41,9 +45,10 @@ def main():
     seen = load_seen()
     new_seen = seen.copy()
 
-    # Standard headers to mimic a browser
+    # Added 'Referer' header. CDNs often check this to ensure requests are coming from the actual website.
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Referer': f"{BASE_URL}/"
     }
 
     print(f"Checking profile: {PROFILE_URL}")
@@ -77,20 +82,27 @@ def main():
 
             asoup = BeautifulSoup(ar.text, 'html.parser')
             
+            # 2. Track processed items to avoid downloading the same image twice (via duplicate/nav links)
+            processed_items = set()
+            
             # Find item links inside the album
             for ia_tag in asoup.find_all('a', href=True):
                 ihref = ia_tag['href']
                 
                 if '/i/' in ihref:
+                    item_url = ihref if ihref.startswith('http') else BASE_URL + ihref
+                    
+                    if item_url in processed_items:
+                        continue
+                    processed_items.add(item_url)
+                    
                     # 1. Check for Video thumbnail in the album page
                     video_tag = ia_tag.find('video')
                     if video_tag and video_tag.get('src'):
-                        download_file(video_tag['src'], DOWNLOAD_DIR)
+                        download_file(video_tag['src'], DOWNLOAD_DIR, headers)
                     else:
                         # 2. It's an image, we need to visit the item page
                         try:
-                            # If the href is absolute, use it directly. If relative, append base URL.
-                            item_url = ihref if ihref.startswith('http') else BASE_URL + ihref
                             ir = requests.get(item_url, headers=headers, timeout=10)
                             ir.raise_for_status()
                             isoup = BeautifulSoup(ir.text, 'html.parser')
@@ -98,7 +110,7 @@ def main():
                             # Find the main image
                             img_tag = isoup.find('img', id='main-image')
                             if img_tag and img_tag.get('src'):
-                                download_file(img_tag['src'], DOWNLOAD_DIR)
+                                download_file(img_tag['src'], DOWNLOAD_DIR, headers)
                         except Exception as e:
                             print(f"Error extracting image from {item_url}: {e}")
                             
